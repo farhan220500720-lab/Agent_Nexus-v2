@@ -1,0 +1,19 @@
+# Core Frameworks for Agentic AI and NLP
+langchain
+pydantic==1.10.12  # Pydantic v1 is often required for LangChain stability
+openai
+python-dotenv
+tiktoken
+
+# Data Processing and ORM (Agent Persistence/Memory)
+pandas
+numpy
+sqlalchemy
+psycopg2-binary  # For connecting to the PostgreSQL Docker container
+
+# Vector Store (RAG/Knowledge Retrieval)
+chromadb # Used with the ChromaDB Docker container
+
+# Web/API Automation (Tools for Agents)
+requests
+beautifulsoup4

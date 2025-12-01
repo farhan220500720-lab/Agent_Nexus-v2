@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database for Agent State/Memory
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: agent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Vector Database (ChromaDB) for RAG/Context
+  chroma:
+    image: chromadb/chroma:latest
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      # Optional, but good practice
+      IS_PERSISTENT: "TRUE"
+    volumes:
+      - chroma_data:/app/chroma/data
+
+volumes:
+  postgres_data:
+  chroma_data:
