@@ -10,10 +10,18 @@ pandas
 numpy
 sqlalchemy
 psycopg2-binary  # For connecting to the PostgreSQL Docker container
-
+asyncpg 
+# Database drivers
+sqlalchemy
+psycopg2-binary
+asyncpg   # <--- ADD THIS LINE FOR ASYNC POSTGRESQL CONNECTIONS
 # Vector Store (RAG/Knowledge Retrieval)
 chromadb # Used with the ChromaDB Docker container
 
 # Web/API Automation (Tools for Agents)
 requests
 beautifulsoup4
+# API Framework for Exposing Agent Functionality
+fastapi
+uvicorn[standard]
+
