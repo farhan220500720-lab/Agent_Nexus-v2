@@ -1,59 +1,43 @@
-# InsightMate/api.py
-import os
-from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
-from datetime import datetime
+from sqlalchemy import text
+from typing import List
+import uuid
 
-from common.logger import get_logger
 from common.db.postgres import get_async_session, engine
-from common.db.models import Meeting  # SQLAlchemy model we migrated
+from common.schemas import MeetingBase, MeetingOutput
+from common.db import crud
+from InsightMate.tasks import generate_summary
 
-logger = get_logger("insightmate")
-app = FastAPI(title="InsightMate (dev)")
-
-class MeetingCreate(BaseModel):
-    title: str
-    transcript: str
-
-class MeetingOut(BaseModel):
-    id: int
-    title: str
-    created_at: str
+app = FastAPI()
 
 @app.get("/healthz")
 async def health():
-    # DB connectivity healthcheck
     try:
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
-        return {"status": "ok", "now": datetime.utcnow().isoformat() + "Z"}
+        return {"status": "ok"}
     except Exception as e:
-        logger.exception("health check failed")
-        raise HTTPException(status_code=500, detail="db error")
+        return {"status": "error", "detail": str(e)}
 
-@app.post("/meetings", response_model=MeetingOut, status_code=201)
-async def create_meeting(payload: MeetingCreate, session: AsyncSession = Depends(get_async_session)):
-    """
-    Create a meeting record in Postgres (async).
-    This uses SQLAlchemy ORM model Meeting and AsyncSession.
-    """
-    meeting = Meeting(title=payload.title, transcript=payload.transcript)
-    try:
-        session.add(meeting)
-        await session.commit()
-        await session.refresh(meeting)  # populate generated id/created_at
-        logger.info("meeting inserted", extra={"id": meeting.id, "title": meeting.title})
-        return MeetingOut(id=meeting.id, title=meeting.title, created_at=meeting.created_at.isoformat())
-    except Exception as e:
-        await session.rollback()
-        logger.exception("failed to insert meeting")
-        raise HTTPException(status_code=500, detail="insert failed")
+@app.post("/meetings", response_model=MeetingOutput, status_code=status.HTTP_202_ACCEPTED)
+async def create_meeting_endpoint(meeting: MeetingBase, db: AsyncSession = Depends(get_async_session)):
+    # 1. Save the meeting to the relational database (Postgres)
+    db_meeting = await crud.create_meeting(db, meeting)
+    
+    # 2. Enqueue the task for background processing (Agentic work)
+    # The API returns immediately, and the worker (in the other terminal) picks it up.
+    task_id = str(uuid.uuid4())
+    generate_summary.send(
+        meeting_id=db_meeting.id, 
+        transcript=db_meeting.transcript, 
+        target_length=250
+    )
+    
+    # 3. Return the saved object immediately with a 202 Accepted status
+    return db_meeting
+    
 
-@app.get("/meetings")
-async def list_meetings(limit: int = 50, session: AsyncSession = Depends(get_async_session)):
-    stmt = select(Meeting).order_by(Meeting.id.desc()).limit(limit)
-    result = await session.execute(stmt)
-    rows = result.scalars().all()
-    return [{"id": r.id, "title": r.title, "created_at": r.created_at.isoformat()} for r in rows]
+@app.get("/meetings", response_model=List[MeetingOutput])
+async def read_meetings(db: AsyncSession = Depends(get_async_session)):
+    return await crud.get_all_meetings(db)

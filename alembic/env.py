@@ -1,4 +1,3 @@
-# alembic/env.py
 import asyncio
 from logging.config import fileConfig
 from sqlalchemy import pool
@@ -11,13 +10,11 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# point to your common models
-from common.db.models import Base  # noqa
+from common.db.base import Base
+from common.db import models
 
-# this is the URL for alembic autogenerate; prefer using env var
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dev:dev@127.0.0.1:5432/agentic")
 
-# Interpret the config file for Python logging.
 config = context.config
 fileConfig(config.config_file_name)
 

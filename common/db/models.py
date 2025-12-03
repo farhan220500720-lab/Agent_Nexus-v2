@@ -1,12 +1,12 @@
-# common/db/models.py
-from sqlalchemy import Column, Integer, String, Text, DateTime, func
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, String, Text
+# Import the new CommonBase
+from .base import CommonBase
 
-Base = declarative_base()
 
-class Meeting(Base):
-    __tablename__ = "meetings"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(length=500), nullable=False)
+class Meeting(CommonBase):
+    __tablename__ = "meeting"
+
+    # ID and Timestamps are now inherited!
+    title = Column(String(256), index=True, nullable=False)
     transcript = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    

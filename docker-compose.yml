@@ -1,28 +1,63 @@
-version: '3.8'
-
+version: "3.8"
 services:
-  # 1. PostgreSQL Database for Agent State/Memory
   postgres:
     image: postgres:15
-    restart: always
+    container_name: agentic_postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: agent_db
-   
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: agentic
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d agentic"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  
-  chroma:
-    image: chromadb/chroma:latest
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: agentic_qdrant
     ports:
-      - "8002:8000"
+      - "6333:6333"
+      - "6334:6334"
     volumes:
-      - chroma_data:/chroma/chroma
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentic_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n
+    container_name: agentic_n8n
+    environment:
+      DB_TYPE: postgresdb
+      DB_HOST: postgres 
+      DB_USER: dev
+      DB_PASSWORD: dev
+      DB_DATABASE: agentic
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      GENERIC_TIMEZONE: Europe/London
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
-  postgres_data:
-  chroma_data:
+  pgdata:
+  qdrant_storage:
+  n8n_data:
