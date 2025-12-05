@@ -1,12 +1,15 @@
-from sqlalchemy import Column, String, Text
-# Import the new CommonBase
-from .base import CommonBase
+from sqlalchemy import Column, Integer, String, Text, Boolean
+from sqlalchemy.ext.declarative import declarative_base
 
+Base = declarative_base()
 
-class Meeting(CommonBase):
-    __tablename__ = "meeting"
+class Meeting(Base):
+    __tablename__ = "meetings"
 
-    # ID and Timestamps are now inherited!
-    title = Column(String(256), index=True, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True, nullable=False)
     transcript = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)
+    action_items = Column(Text, nullable=True)
+    is_valid = Column(Boolean, default=False)
     

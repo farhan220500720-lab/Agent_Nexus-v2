@@ -1,0 +1,10 @@
+{
+    "python.analysis.extraPaths": [
+        "./common",
+        "./InsightMate",
+        "./StudyFlow",
+        "./ChatBuddyPlus",
+        "./AutoAgentHub"
+    ],
+    "python.testing.pytestEnabled": true
+}

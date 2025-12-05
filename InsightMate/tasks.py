@@ -1,20 +1,13 @@
 import dramatiq
-from common.tasks.broker import redis_broker
-from common.tasks import SummaryTaskPayload
-import time
-import os
-import dramatiq
+from dramatiq.brokers.redis import RedisBroker
+from .summary_agent import run_summary_agent
 
-dramatiq.set_broker(redis_broker)
+broker = RedisBroker(host="localhost", port=6379)
+dramatiq.set_broker(broker)
 
-@dramatiq.actor
-def generate_summary(meeting_id: int, transcript: str, target_length: int):
-    print(f"[{os.getpid()}] Starting summary generation for meeting ID: {meeting_id}...")
+@dramatiq.actor(queue_name='meetings')
+async def summarize_meeting(title: str, transcript: str):
+    print(f"--- Processing Task: {title} ---")
+    await run_summary_agent(transcript=transcript, title=title)
+    print(f"--- Task Complete: {title} ---")
     
-    time.sleep(5) 
-    
-    simulated_summary = f"Summary for meeting {meeting_id} (Length {target_length}): This meeting was successfully summarized after 5 seconds of intensive processing. The core topics were Async Queues (Redis/Dramatiq) and the completion of Phase 2 data architecture."
-    
-    print(f"[{os.getpid()}] Summary generated successfully.")
-    
-    return simulated_summary
