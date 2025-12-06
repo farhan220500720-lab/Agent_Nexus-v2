@@ -1,143 +1,88 @@
-import json
-from typing import Callable, List, Dict, Any
-
-from langchain_core.runnables import Runnable, RunnableLambda
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from typing import TypedDict, Callable, List, Optional, Dict, Any
 from langgraph.graph import StateGraph, END
 
-from common.ai_sdk.llm_client import AIClient
-from common.agent_sdk.schemas import AgentState, ToolCall
-from common.agent_sdk.tools import create_vector_search_tool
+from common.schemas import AgentState, AnalysisResult, ActionItem
+from common.agents.llm_provider import get_llm, LLMProvider
+from common.db.postgres import get_db, PostgresClient
+from common.db.postgres import save_analysis_result
 
-def create_agent_executor(
-    llm_client: AIClient, 
-    tools: List[Callable], 
-    system_prompt: str
-) -> Runnable:
-    """
-    Creates and compiles the core LangGraph state machine for a single agent lobe.
-    """
+async def summarize_node(state: AgentState) -> Dict[str, Any]:
+    llm_provider: LLMProvider = get_llm()
+    transcript = state['transcript']
     
-    tool_names = [t.__name__ for t in tools]
+    has_action_items = True
     
-    llm = llm_client.get_chat_model(temperature=0.0).bind(
-        tools=tools, 
-        tool_choice="auto"
+    simulated_result = AnalysisResult(
+        summary="Initial summary draft: Key decisions were made regarding Q4 roadmap and budget.",
+        key_decisions=["Approved Q4 budget", "Delegated design to John"],
+        action_items=[
+            ActionItem(task_description="Finalize design mockups", assigned_to="John", due_date="Next Monday")
+        ] if has_action_items else []
     )
     
-    llm_chain = (
-        RunnableLambda(lambda state: [SystemMessage(content=system_prompt)])
-        + RunnableLambda(lambda state: [HumanMessage(content=state["user_query"])])
-        + llm
-    )
-
-    def call_llm(state: AgentState) -> Dict[str, Any]:
-        """
-        Invokes the LLM to decide on the next action (ToolCall) or the final response.
-        """
-        result = llm_chain.invoke(state)
+    if simulated_result.action_items:
+        next_step = "refine"
+    else:
+        next_step = "persist"
         
-        if result.tool_calls:
-            tool_call_data = result.tool_calls[0]
-            action = ToolCall(
-                tool_name=tool_call_data['name'],
-                tool_input=json.dumps(tool_call_data['args'])
-            )
-            return {"agent_action": action, "run_count": state["run_count"] + 1}
-        else:
-            return {"final_response": result.content}
+    return {
+        "analysis_result": simulated_result,
+        "next_step": next_step
+    }
 
-
-    def execute_tool(state: AgentState) -> Dict[str, Any]:
-        """
-        Executes the tool function specified by the AgentAction.
-        """
-        action: ToolCall = state['agent_action']
-        tool_map = {t.__name__: t for t in tools}
-        
-        if action.tool_name not in tool_map:
-            raise ValueError(f"Unknown tool: {action.tool_name}")
-
-        try:
-            tool_args = json.loads(action.tool_input)
-            
-            tool_result = tool_map[action.tool_name](**tool_args)
-            
-            return {"tool_output": tool_result}
-        except Exception as e:
-            return {"tool_output": f"Tool execution failed with error: {e}. Please try a different approach."}
-
-    def route_to_next_step(state: AgentState) -> str:
-        """
-        Determines the next node in the graph based on the LLM's output.
-        """
-        if state.get("final_response"):
-            return "end"
-        
-        if state.get("agent_action"):
-            return "execute_tool"
-            
-        return "call_llm"
-        
-    workflow = StateGraph(AgentState)
-
-    workflow.add_node("call_llm", call_llm)
-    workflow.add_node("execute_tool", execute_tool)
-
-    workflow.set_entry_point("call_llm")
+async def refine_node(state: AgentState) -> Dict[str, Any]:
+    llm_provider: LLMProvider = get_llm()
+    transcript = state['transcript']
+    analysis_result: AnalysisResult = state['analysis_result']
     
+    analysis_result.summary += " (Refined for detail and clarity)."
+
+    return {
+        "analysis_result": analysis_result,
+        "next_step": "persist"
+    }
+
+async def persistence_node(state: AgentState) -> Dict[str, Any]:
+    
+    return {"next_step": "end"}
+
+def router_node(state: AgentState) -> str:
+    next_step = state['next_step']
+    if next_step == "summarize":
+        return "summarize"
+    elif next_step == "refine":
+        return "refine"
+    elif next_step == "persist":
+        return "persist"
+    else:
+        return END
+
+def build_insightmate_graph() -> StateGraph:
+    
+    class InsightMateGraphState(TypedDict):
+        transcript: str
+        analysis_result: Optional[AnalysisResult]
+        next_step: str
+
+    workflow = StateGraph(InsightMateGraphState)
+
+    workflow.add_node("summarize", summarize_node)
+    workflow.add_node("refine", refine_node)
+    workflow.add_node("persist", persistence_node)
+
+    workflow.set_entry_point("summarize")
+
     workflow.add_conditional_edges(
-        "call_llm", 
-        route_to_next_step,
-        {"execute_tool": "execute_tool", "end": END}
+        "summarize", 
+        router_node,
+        {
+            "refine": "refine",
+            "persist": "persist"
+        }
     )
-    
-    workflow.add_edge("execute_tool", "call_llm")
 
-    app = workflow.compile()
-    
-    return app
+    workflow.add_edge("refine", "persist") 
 
-# --- Example Usage: Simulate InsightMate Agent ---
+    workflow.add_edge("persist", END)
 
-if __name__ == "__main__":
-    from common.data_sdk.vector_client import VectorClient
-    
-    llm_client = AIClient(model_name="gpt-4o-mini")
-    vector_client = VectorClient(llm_client)
-
-    INSIGHT_MATE_COLLECTION = "insight_mate_v1"
-    
-    INSIGHT_MATE_PROMPT = (
-        "You are InsightMate, a world-class AI meeting summary and action item tracker. "
-        "Your goal is to be concise, helpful, and grounded in facts from your memory. "
-        "ALWAYS use the vector_memory_search tool if the user asks about past meetings, "
-        "tasks, or decisions. If you cannot find relevant information, state that clearly."
-    )
-    
-    tools = [
-        create_vector_search_tool(vector_client, INSIGHT_MATE_COLLECTION),
-    ]
-
-    vector_client.upsert_documents(
-        INSIGHT_MATE_COLLECTION,
-        ["Kakarot must finalize the Qdrant connection setup by EOD Friday."],
-        [{"source": "meeting_01"}]
-    )
-    
-    insight_mate_executor = create_agent_executor(llm_client, tools, INSIGHT_MATE_PROMPT)
-    
-    user_query = "What is the action item I was assigned from the last meeting?"
-    initial_state = AgentState(user_query=user_query, chat_history=[], tool_output="", agent_action=None, final_response="", run_count=0)
-    
-    print(f"\n--- Running InsightMate Agent for Query: '{user_query}' ---")
-    
-    for step in insight_mate_executor.stream(initial_state):
-        if "__end__" in step:
-            final_state = step['__end__']
-            print("\n--- FINAL AGENT RESPONSE ---")
-            print(final_state['final_response'])
-            break
-        
-        node_name = list(step.keys())[0]
-        print(f"[{node_name}] -> State Updated: {list(step[node_name].keys())}")
+    return workflow.compile()

@@ -1,26 +1,33 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from InsightMate.tasks import summarize_meeting
+from uuid import uuid4
+from typing import Optional
+from fastapi import FastAPI, Header, HTTPException, status
+from fastapi.responses import JSONResponse
+from common.schemas import TranscriptRequest
+from InsightMate.tasks import process_transcript_analysis
 
-app = FastAPI(
-    title="InsightMate API",
-    description="API for asynchronous meeting summary and action item extraction.",
-    version="1.0.0"
-)
+app = FastAPI(title="InsightMate", version="0.1")
 
-class MeetingPayload(BaseModel):
-    title: str = Field(..., example="Q3 Strategy Review")
-    transcript: str = Field(..., example="Joe: We missed the Q3 revenue target by 10%. Jane: I will prepare a detailed post-mortem report by end of week. Decision: Postpone the new marketing campaign until the report is reviewed.")
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
 
-@app.post("/meetings", status_code=202)
-def submit_meeting_summary_task(payload: MeetingPayload):
-    summarize_meeting.send(
-        title=payload.title,
-        transcript=payload.transcript
-    )
-
-    return {
-        "status": "Task accepted",
-        "message": f"Summary task for '{payload.title}' queued successfully.",
-        "task_name": "summarize_meeting"
-    }
+@app.post("/analyze", status_code=status.HTTP_202_ACCEPTED)
+async def submit_analysis(payload: TranscriptRequest, idempotency_key: Optional[str] = Header(None)):
+    if not payload.transcript or not payload.transcript.strip():
+        raise HTTPException(status_code=400, detail="Transcript is required")
+        
+    task_id = idempotency_key or str(uuid4())
+    task_data = payload.model_dump()
+    
+    try:
+        
+        process_transcript_analysis.send(
+            title=task_data['title'], 
+            transcript=task_data['transcript'], 
+            user_id=task_data['user_id']
+        )
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to enqueue transcript analysis task.")
+        
+    headers = {"Location": f"/tasks/{task_id}"}
+    return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content={"task_id": task_id}, headers=headers)
