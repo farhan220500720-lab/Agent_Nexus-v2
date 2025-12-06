@@ -1,10 +1,18 @@
-from sqlalchemy.ext.declarative import declarative_base
-from .mixins import IDMixin, TimestampMixin
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-# All models will inherit from this Base
-Base = declarative_base()
+from common.config import settings
 
-# All models will inherit from this base class to automatically include ID and timestamps
-class CommonBase(Base, IDMixin, TimestampMixin):
-    __abstract__ = True
-    
+engine = create_engine(
+    settings.SQLALCHEMY_DATABASE_URL, 
+    pool_pre_ping=True
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

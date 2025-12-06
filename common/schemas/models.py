@@ -1,46 +1,55 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Union
+from sqlalchemy import Column, Integer, String, DateTime, func, Text, ForeignKey, Boolean
+from sqlalchemy.orm import declarative_base, relationship
 
-class ActionItem(BaseModel):
-    task_description: str = Field(...)
-    assigned_to: str = Field(...)
-    due_date: str = Field(...)
+Base = declarative_base()
 
-class AnalysisResult(BaseModel):
-    summary: str = Field(...)
-    key_decisions: List[str] = Field(...)
-    action_items: List[ActionItem] = Field(...)
+class Lobe(Base):
+    __tablename__ = "lobes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    description = Column(String)
+    api_endpoint = Column(String)
+    
+    memories = relationship("Memory", back_populates="lobe")
+    
+    def __repr__(self):
+        return f"<Lobe(name='{self.name}')>"
 
-class TranscriptRequest(BaseModel):
-    title: str = Field(...)
-    transcript: str = Field(...)
-    user_id: str = Field(...)
+class Memory(Base):
+    __tablename__ = "memories"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True, nullable=False)
+    lobe_id = Column(Integer, ForeignKey('lobes.id'), index=True)
+    
+    key = Column(String, index=True)
+    value_json = Column(Text, nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    lobe = relationship("Lobe", back_populates="memories")
+    actions = relationship("ActionItem", back_populates="source_memory")
+    
+    def __repr__(self):
+        return f"<Memory(user_id='{self.user_id}', key='{self.key}')>"
 
-class StudyRequest(BaseModel):
-    topic: str = Field(...)
-    study_goal: str = Field(...)
-    current_knowledge_level: str = Field(...)
-    user_id: str = Field(...)
+class ActionItem(Base):
+    __tablename__ = "action_items"
 
-class StudyStep(BaseModel):
-    step_number: int = Field(...)
-    description: str = Field(...)
-    estimated_time_minutes: int = Field(...)
-    deliverable: str = Field(...)
+    id = Column(Integer, primary_key=True, index=True)
+    memory_id = Column(Integer, ForeignKey('memories.id'), index=True, nullable=False)
+    
+    description = Column(Text, nullable=False)
+    status = Column(String, default="pending", nullable=False) # pending, complete, blocked
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    is_urgent = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-class StudyPlan(BaseModel):
-    topic: str = Field(...)
-    prerequisites: List[str] = Field(...)
-    total_estimated_time_hours: float = Field(...)
-    steps: List[StudyStep] = Field(...)
+    source_memory = relationship("Memory", back_populates="actions")
 
-class AgentState(BaseModel):
-    transcript: str
-    analysis_result: Optional[AnalysisResult] = None
-    next_step: str
-
-class StudyAgentState(BaseModel):
-    study_request: StudyRequest
-    study_plan: Optional[StudyPlan] = None
-    next_step: str
-    user_id: str
+    def __repr__(self):
+        return f"<ActionItem(status='{self.status}', description='{self.description[:30]}...')>"

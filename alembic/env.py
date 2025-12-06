@@ -1,43 +1,59 @@
-import asyncio
+import sys
+import os
 from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from common.db.base import Base
-from common.db import models
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dev:dev@127.0.0.1:5432/agentic")
+
+from common.config import settings
+from common.schemas.models import Base
 
 config = context.config
-fileConfig(config.config_file_name)
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
-def run_migrations_offline():
-    url = DATABASE_URL
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+def run_migrations_offline() -> None:
+    url = settings.SQLALCHEMY_DATABASE_URL
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
     with context.begin_transaction():
         context.run_migrations()
 
-def do_run_migrations(connection: Connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
 
-async def run_async_migrations():
-    connectable = create_async_engine(DATABASE_URL, future=True)
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        {
+            'sqlalchemy.url': settings.SQLALCHEMY_DATABASE_URL,
+            'sqlalchemy.poolclass': 'sqlalchemy.pool.NullPool'
+        },
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection, target_metadata=target_metadata
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_async_migrations())
+    run_migrations_online()
+    

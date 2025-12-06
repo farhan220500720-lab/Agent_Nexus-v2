@@ -1,63 +1,60 @@
-version: "3.8"
+version: '3.8'
+
 services:
-  postgres:
-    image: postgres:15
-    container_name: agentic_postgres
+  db:
+    image: postgres:16-alpine
+    container_name: agentnexus_db
+    restart: always
     environment:
-      POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev
-      POSTGRES_DB: agentic
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
     ports:
       - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dev -d agentic"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: agentic_qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_storage:/qdrant/storage
-    restart: unless-stopped
-
   redis:
     image: redis:7-alpine
-    container_name: agentic_redis
+    container_name: agentnexus_redis
+    restart: always
     ports:
       - "6379:6379"
-    restart: unless-stopped
 
-  n8n:
-    image: n8nio/n8n
-    container_name: agentic_n8n
-    environment:
-      DB_TYPE: postgresdb
-      DB_HOST: postgres 
-      DB_USER: dev
-      DB_PASSWORD: dev
-      DB_DATABASE: agentic
-      N8N_HOST: localhost
-      N8N_PORT: 5678
-      N8N_PROTOCOL: http
-      GENERIC_TIMEZONE: Europe/London
-    ports:
-      - "5678:5678"
+  app:
+    build: .
+    container_name: agentnexus_app
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
     volumes:
-      - n8n_data:/home/node/.n8n
-    restart: unless-stopped
+      - .:/usr/src/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    container_name: agentnexus_worker
+    command: dramatiq StudyFlow.tasks -w 4 -t 8
+    volumes:
+      - .:/usr/src/app
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
 volumes:
-  pgdata:
-  qdrant_storage:
-  n8n_data:
+  postgres_data:
