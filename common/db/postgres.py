@@ -3,8 +3,11 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from contextlib import asynccontextmanager
 from common.config import settings
-from common.db.study_models import QuizAttemptModel
+from common.db import QuizAttemptModel, ConversationMessageModel, UserProfileSummaryModel
 from common.schemas.study_schemas import QuizAttempt
+from common.schemas.chat_schemas import ConversationMessage, UserProfileSummary
+from sqlalchemy import select
+import json
 
 class PostgresClient:
     _instance = None
@@ -41,5 +44,57 @@ class PostgresClient:
                 score=attempt_data.score
             )
             session.add(new_attempt)
+    
+    async def save_conversation_message(self, message_data: ConversationMessage):
+        async with self.get_session() as session:
+            new_message = ConversationMessageModel(
+                id=str(message_data.timestamp),
+                user_id=message_data.user_id,
+                session_id=message_data.session_id,
+                message_type=message_data.message_type,
+                content=message_data.content,
+                timestamp=message_data.timestamp
+            )
+            session.add(new_message)
+
+    async def get_user_profile(self, user_id: str) -> str:
+        async with self.get_session() as session:
+            stmt = select(UserProfileSummaryModel).where(UserProfileSummaryModel.user_id == user_id)
+            result = await session.execute(stmt)
+            profile = result.scalars().first()
+            
+            if profile:
+                return json.dumps({
+                    "name": profile.name,
+                    "key_interests": json.loads(profile.key_interests),
+                    "key_facts": json.loads(profile.key_facts),
+                    "last_updated": profile.last_updated
+                })
+            return "No profile found."
+
+    async def update_user_profile(self, profile_data: UserProfileSummary):
+        async with self.get_session() as session:
+            stmt = select(UserProfileSummaryModel).where(UserProfileSummaryModel.user_id == profile_data.user_id)
+            result = await session.execute(stmt)
+            existing_profile = result.scalars().first()
+
+            interests_json = json.dumps(profile_data.key_interests)
+            facts_json = json.dumps(profile_data.key_facts)
+            
+            if existing_profile:
+                existing_profile.name = profile_data.name
+                existing_profile.key_interests = interests_json
+                existing_profile.key_facts = facts_json
+                existing_profile.last_updated = profile_data.last_updated
+            else:
+                new_profile = UserProfileSummaryModel(
+                    user_id=profile_data.user_id,
+                    summary_id=profile_data.summary_id,
+                    name=profile_data.name,
+                    key_interests=interests_json,
+                    key_facts=facts_json,
+                    last_updated=profile_data.last_updated
+                )
+                session.add(new_profile)
 
 POSTGRES_CLIENT = PostgresClient()
