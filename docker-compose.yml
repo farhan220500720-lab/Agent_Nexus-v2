@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:16-alpine
@@ -16,8 +14,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 15s
 
   redis:
     image: redis:7-alpine
@@ -29,30 +28,36 @@ services:
   app:
     build: .
     container_name: agentnexus_app
-    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    # FIX: Use 'poetry run' to execute uvicorn within the virtual environment
+    command: poetry run uvicorn api:app --host 0.0.0.0 --port 8000
     volumes:
       - .:/usr/src/app
     ports:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_started
 
   worker:
     build: .
     container_name: agentnexus_worker
-    command: dramatiq StudyFlow.tasks -w 4 -t 8
+    # FIX: Use 'poetry run' to execute dramatiq within the virtual environment
+    command: poetry run dramatiq StudyFlow.tasks --processes 4 --threads 8
     volumes:
       - .:/usr/src/app
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_started
 

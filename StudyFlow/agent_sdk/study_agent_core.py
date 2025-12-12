@@ -1,35 +1,64 @@
-from common.schemas import StudyAgentState
-from langgraph.graph import StateGraph, END
+from typing import TypedDict, List, Literal
+from langgraph.graph import StateGraph, START, END
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from common.agents.tools import vector_search_tool
+from common.schemas.study_schemas import StudyResultSchema
+from common.agents.tools import save_quiz_attempt_tool
 
-def initialize_study_plan(state):
-    print("Agent Node: Initializing Study Plan State")
-    return {"next_step": "plan_generation"}
 
-def generate_study_plan(state):
-    print("Agent Node: Generating Study Plan via LLM")
-    return {"next_step": "plan_refinement"}
+class StudyAgentState(TypedDict):
+    user_id: str
+    query: str
+    
+    retrieved_documents: List[str]
+    
+    study_plan_result: StudyResultSchema | None
+    quiz_attempt: float
+    
+    critique_needed: Literal['YES', 'NO', 'N/A']
+    loop_count: int
 
-def refine_and_format_plan(state):
-    print("Agent Node: Refining and Formatting Plan")
-    return {"next_step": "save_to_db"}
 
-def save_plan_to_db(state):
-    print("Agent Node: Saving Plan to DB")
-    return {"next_step": "complete"}
 
-def build_studyflow_graph(llm_client):
-    graph = StateGraph(StudyAgentState)
+LLM = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
-    graph.add_node("initialize", initialize_study_plan)
-    graph.add_node("generate_plan", generate_study_plan)
-    graph.add_node("refine_plan", refine_and_format_plan)
-    graph.add_node("save_plan", save_plan_to_db)
 
-    graph.set_entry_point("initialize")
+def retrieve_rag_context(state: StudyAgentState) -> StudyAgentState:
+    print(f"--- STUDYFLOW NODE: Retrieving Context for query: {state['query'][:30]}... ---")
+    results = vector_search_tool(query=state['query']) 
+    context_list = [r['content'] for r in results if r]
+    print(f"--- STUDYFLOW: Retrieved {len(context_list)} chunks. ---")
+    return {"retrieved_documents": context_list}
 
-    graph.add_edge("initialize", "generate_plan")
-    graph.add_edge("generate_plan", "refine_plan")
-    graph.add_edge("refine_plan", "save_plan")
-    graph.add_edge("save_plan", END)
+def generate_study_plan(state: StudyAgentState) -> StudyAgentState:
+    print("--- STUDYFLOW NODE: Generating Grounded Study Result (Structured Output) ---")
+    context_str = "\n---\n".join(state['retrieved_documents'])
+    system_prompt = (
+        "You are an expert Study Assistant. Your task is to answer the user's query truthfully and concisely "
+        "using ONLY the provided context from the study documents. If the context does not contain the answer, "
+        "state that you lack the necessary information and set confidence_score to 0.1."
+    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", 
+         f"QUERY: {state['query']}\n\n"
+         f"RETRIEVED CONTEXT:\n{context_str}"
+        )
+    ])
+    chain = prompt | LLM.with_structured_output(StudyResultSchema)
+    study_result = chain.invoke({})
+    return {"study_plan_result": study_result}
 
-    return graph.compile()
+def check_plan_quality(state: StudyAgentState) -> Literal['REVISE', 'SAVE']:
+    print("StudyFlow: Checking plan quality...")
+    return 'SAVE'
+
+def create_study_graph():
+    workflow = StateGraph(StudyAgentState)
+    workflow.add_node("retrieve", retrieve_rag_context)
+    workflow.add_node("generate", generate_study_plan)
+    workflow.set_entry_point("retrieve")
+    workflow.add_edge("retrieve", "generate")
+    workflow.add_conditional_edges("generate", check_plan_quality, {"REVISE": "generate", "SAVE": END})
+    return workflow.compile()

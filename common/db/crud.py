@@ -1,19 +1,43 @@
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Type, TypeVar
+from typing import TypeVar, Generic, Type, Optional
+import uuid
+
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.declarative import declarative_base
+
 from common.db.base import CommonBase
 from common.schemas import MeetingBase, MeetingInDB
-from common.db.models import Meeting
 
-async def create_meeting(db: AsyncSession, meeting_data: MeetingBase) -> MeetingInDB:
-    # Convert Pydantic model to dict and create SQLAlchemy model instance
-    db_obj = Meeting(**meeting_data.dict()) 
-    db.add(db_obj)
-    await db.commit()
-    await db.refresh(db_obj)
-    return MeetingInDB.from_orm(db_obj)
+# Define SQLAlchemy model type variable
+ModelType = TypeVar("ModelType", bound=CommonBase)
+# Define Pydantic Create/Update schema type variables (using MeetingBase as temporary generic placeholder)
+CreateSchemaType = TypeVar("CreateSchemaType", bound=MeetingBase)
+UpdateSchemaType = TypeVar("UpdateSchemaType", bound=MeetingBase)
 
-async def get_all_meetings(db: AsyncSession) -> List[MeetingInDB]:
-    result = await db.execute(select(Meeting))
-    meetings = result.scalars().all()
-    return [MeetingInDB.from_orm(m) for m in meetings]
+class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
+    def __init__(self, model: Type[ModelType]):
+        """
+        CRUD object with default methods to Create, Read, Update, Delete.
+        """
+        self.model = model
+
+    def get(self, db: Session, id: uuid.UUID) -> Optional[ModelType]:
+        return db.query(self.model).filter(self.model.id == id).first()
+
+# --- StudyFlow Lobe CRUDS (Placeholders) ---
+
+class StudyRequestCRUD(CRUDBase[CommonBase, MeetingBase, MeetingBase]):
+    pass
+
+class StudyPlanCRUD(CRUDBase[CommonBase, MeetingBase, MeetingBase]):
+    pass
+
+class AnalysisResultCRUD(CRUDBase[CommonBase, MeetingBase, MeetingBase]):
+    pass
+
+class ActionItemCRUD(CRUDBase[CommonBase, MeetingBase, MeetingBase]):
+    pass
+
+# --- InsightMate Lobe CRUDS (Placeholder) ---
+
+class MeetingCRUD(CRUDBase[CommonBase, MeetingBase, MeetingInDB]):
+    pass
