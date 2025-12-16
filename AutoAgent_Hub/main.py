@@ -1,35 +1,26 @@
-from agentic_agent import run_agent
-import os
-from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from AutoAgent_Hub.api.routes import router
+from common.config.logging_config import logger
 
-# Load the key from the .env file we just created
-load_dotenv()
+app = FastAPI(
+    title="AutoAgent Hub Lobe API",
+    description="The flagship Agent Lobe for Hierarchical Planning and Orchestration.",
+    version="1.0.0"
+)
 
-def main():
-    print("--- AutoAgent_Hub Initialized ---")
-    print("Type 'exit' or 'quit' to stop.\n")
+logger.info("AutoAgent Hub Lobe starting up.")
 
-    while True:
-        # 1. Get input from the user
-        try:
-            user_input = input("You: ")
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            break
+origins = [
+    "*",
+]
 
-        # 2. Check if user wants to quit
-        if user_input.lower() in ["exit", "quit"]:
-            print("Goodbye!")
-            break
-        
-        # 3. Run the Agent with the user's input
-        # The error happened because this part was missing 'user_input' inside the ()
-        print("Agent is thinking...")
-        try:
-            response = run_agent(user_input)
-            print(f"AutoAgent: {response}\n")
-        except Exception as e:
-            print(f"Error: {e}")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-if __name__ == "__main__":
-    main()
+app.include_router(router, prefix="/autoagenthub", tags=["AutoAgentHub"])

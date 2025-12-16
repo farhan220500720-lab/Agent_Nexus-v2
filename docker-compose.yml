@@ -1,65 +1,200 @@
+version: '3.8'
+
 services:
+ 
+
   db:
     image: postgres:16-alpine
-    container_name: agentnexus_db
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: agentnexus_user
+      POSTGRES_PASSWORD: nexus_password
+      POSTGRES_DB: agentnexus_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data/
-    ports:
-      - "5432:5432"
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -U agentnexus_user"]
       interval: 5s
-      timeout: 10s
-      retries: 10
-      start_period: 15s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: agentnexus_redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
     restart: always
     ports:
-      - "6379:6379"
-
-  app:
-    build: .
-    container_name: agentnexus_app
-    # FIX: Use 'poetry run' to execute uvicorn within the virtual environment
-    command: poetry run uvicorn api:app --host 0.0.0.0 --port 8000
+      - "6333:6333" # Qdrant API port
+      - "6334:6334" # gRPC port
     volumes:
-      - .:/usr/src/app
+      - qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT_HOST: qdrant
+    # CRITICAL FIX: Add healthcheck so dependent services can start
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Agent Lobe API Services (Phase 1 & 6) ---
+  
+  insightmate:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: uvicorn InsightMate.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      - ENV=dev
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_HOST=http://qdrant:6333
+      - GEMINI_API_KEY=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
+
+  studyflow:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: uvicorn StudyFlow.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_HOST=http://qdrant:6333
+      - GEMINI_API_KEY=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
+
+  chatbuddy:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: uvicorn ChatBuddyPlus.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_HOST=http://qdrant:6333
+      - GEMINI_API_KEY=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
+
+  autoagenthub:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: uvicorn AutoAgent_Hub.main:app --host 0.0.0.0 --port 8000
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # CRITICAL FIX: Changed host port from 8000 to 8080 to avoid conflict
+      - "8080:8000" 
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    # CRITICAL: Expose Lobe URLs to the Hub so it can orchestrate calls
+    environment:
+      - INSIGHT_MATE_URL=http://insightmate:8000
+      - STUDY_FLOW_URL=http://studyflow:8000
+      - CHAT_BUDDY_URL=http://chatbuddy:8000
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_HOST=http://qdrant:6333
+      - GEMINI_API_KEY=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
 
-  worker:
+  # --- Dramatiq Worker Services (Phase 3 & 6) ---
+
+  insightmate_worker:
     build: .
-    container_name: agentnexus_worker
-    # FIX: Use 'poetry run' to execute dramatiq within the virtual environment
-    command: poetry run dramatiq StudyFlow.tasks --processes 4 --threads 8
     volumes:
-      - .:/usr/src/app
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - .:/app
+    working_dir: /app
+    command: python -m dramatiq InsightMate.tasks
     depends_on:
-      db:
-        condition: service_started
       redis:
-        condition: service_started
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - QDRANT_HOST=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=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
+
+  studyflow_worker:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python -m dramatiq StudyFlow.tasks
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - QDRANT_HOST=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=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
+
+  chatbuddy_worker:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python -m dramatiq ChatBuddyPlus.tasks
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - QDRANT_HOST=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=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
+
+  autoagenthub_worker:
+    build: .
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python -m dramatiq AutoAgent_Hub.tasks
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentnexus_user:nexus_password@db/agentnexus_db
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=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
 
 volumes:
   postgres_data:
+  redis_data:
+  qdrant_storage:
