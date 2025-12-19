@@ -1,6 +1,5 @@
 from typing import TypedDict, Callable, List, Optional, Dict, Any
 from langgraph.graph import StateGraph, END
-
 from common.schemas import AgentState, AnalysisResult, ActionItem
 from common.agents.llm_provider import get_llm, LLMProvider
 from common.db.postgres import get_db, PostgresClient
